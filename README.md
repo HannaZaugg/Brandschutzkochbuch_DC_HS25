@@ -1,38 +1,29 @@
 
-# IFC Height • Schritt 1 (nur CLI)
+# Brandschutzkochbuch (IFC + Streamlit)
 
-Ziel: **So simpel wie möglich** ein IFC laden und die Gebäudehöhe berechnen.
+Streamlit-App zum Erfassen von Projektinfos, Beantworten eines Fragenkatalogs und Auswerten von IFC-Dateien (Gebäudehöhe, Geschossflächen). Ohne IFC können Höhe/Fläche manuell erfasst werden. Ergebnisse erscheinen in einer Übersicht und in farbigen Kacheln nach Kategorien.
 
 ## Installation
 ```bash
 python -m venv .venv
-# macOS/Linux
-source .venv/bin/activate
-# Windows PowerShell
-# .venv\Scripts\Activate.ps1
-
+source .venv/bin/activate          # Windows: .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 
-## Nutzung
+## Start (Streamlit)
 ```bash
-# 1) Loader-Selbsttest (ohne Datei nur Importcheck)
-python processors/ifc_loader.py
+streamlit run app.py
+```
+- Tab „Objektinformationen“: Projektnummer, Projektname, Nutzung, Bauweise eingeben; IFC hochladen oder Höhe/Fläche manuell erfassen.
+- Tab „Fragen“: restlichen Fragenkatalog ausfüllen (Auswahlfelder bzw. Freitext).
+- Dashboard: Übersicht (inkl. VKF-Kategorie aus Höhe) und Kacheln je Kategorie.
 
-# 2) Loader mit Datei (Schema & Grundzahlen)
-python processors/ifc_loader.py "/Pfad/zu/deinem/Modell.ifc"
-
-# 3) Höhenberechnung (minimal)
-python processors/height.py "/Pfad/zu/deinem/Modell.ifc"
-
-# 4) Einfache Gesamtausführung
-python run_height.py "/Pfad/zu/deinem/Modell.ifc"
+## CLI (optional)
+```bash
+# IFC laden, Höhe/Flächen berechnen, Fragen interaktiv abfragen und nach Excel schreiben
+python run.py "/Pfad/zum/Modell.ifc"
 ```
 
-> Achtung Pfade mit Leerzeichen **immer in Anführungszeichen** setzen.
-
-## Nächste Schritte (geplant)
-- Robustere Höhenlogik (Bounding Box / ifcopenshell.geom-Fallback)
-- VKF-Höhenkategorien ableiten
-- Einfache CSV-/Excel-Ausgabe
-- Später: Streamlit-UI
+## Hinweise
+- IFC-Auswertung benötigt `ifcopenshell`. Für Excel-Export zusätzlich `pandas` und `openpyxl`.
+- Pfade mit Leerzeichen immer in Anführungszeichen setzen.
