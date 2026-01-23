@@ -22,6 +22,7 @@ st.session_state.setdefault("project_started", False)
 st.session_state.setdefault("dashboard_ready", False)
 st.session_state.setdefault("question_answers", {q.key: q.default for q in DEFAULT_QUESTIONS})
 st.session_state.setdefault("manual_inputs", {"height_m": None, "building_area_m2": None})
+st.session_state.setdefault("manual_storeys", [])
 st.session_state.setdefault("ifc_result", {"height": None, "area": None, "error": None})
 st.session_state.setdefault("active_tab", "Projektstart")  # erinnert an zuletzt genutzten Tab
 st.session_state.setdefault("has_ifc_choice", "Ja")
@@ -294,6 +295,17 @@ def summary_values():
         height_val = st.session_state["manual_inputs"].get("height_m")
     if area_val is None:
         area_val = st.session_state["manual_inputs"].get("building_area_m2")
+    if not storeys:
+        manual_storeys = (
+            st.session_state.get("manual_inputs", {}).get("storeys")
+            or st.session_state.get("manual_storeys")
+            or []
+        )
+        class _ManualStorey:
+            def __init__(self, name, area):
+                self.name = name
+                self.area_m2 = area
+        storeys = [_ManualStorey(s.get("name", f"Geschoss {i+1}"), s.get("area", 0.0)) for i, s in enumerate(manual_storeys)]
 
     # VKF-Kategorie aus manueller Höhe ableiten, falls keine IFC-Kategorie vorliegt
     if vkf_cat is None and height_val is not None:
@@ -324,10 +336,10 @@ with tab_start:
 
     project_number = st.text_input("Projektnummer (Pflicht)", value=st.session_state["project_info"].get("number", ""))
     project_name = st.text_input("Projektname", value=st.session_state["project_info"].get("name", ""))
-    usage_value = st.text_input(
-        "Nutzung",
-        value=st.session_state["question_answers"].get("usage", "-"),
-    )
+    usage_options = ["-", "Wohnen", "Büro", "Industrie", "Gewerbe", "Lager", "Parking", "Verschiedene", "Andere"]
+    usage_current = st.session_state["question_answers"].get("usage", "-")
+    usage_index = usage_options.index(usage_current) if usage_current in usage_options else 0
+    usage_value = st.selectbox("Nutzung", options=usage_options, index=usage_index)
     construction_value = st.selectbox(
         "Bauweise",
         options=["Beton", "Holz", "Stahl", "Weitere", "Unbekannt"],
@@ -344,7 +356,9 @@ with tab_start:
 
     # Wenn kein IFC vorhanden ist, direkt hier Höhe und Fläche abfragen
     manual_height_start = None
-    manual_area_start = None
+    manual_storeys = st.session_state.get("manual_storeys") or []
+    if has_ifc_choice == "Nein" and not manual_storeys:
+        manual_storeys = [{"name": "EG", "area": 0.0}]
     if has_ifc_choice == "Nein":
         manual_height_start = st.number_input(
             "Gebäudehöhe [m] (kein IFC vorhanden)",
@@ -353,13 +367,35 @@ with tab_start:
             step=0.1,
             key="manual_height_start",
         )
-        manual_area_start = st.number_input(
-            "Gebäudefläche (Summe Geschosse) [m²] (kein IFC vorhanden)",
-            value=st.session_state["manual_inputs"].get("building_area_m2") or 0.0,
-            min_value=0.0,
-            step=1.0,
-            key="manual_area_start",
-        )
+        st.markdown("**Geschossflächen manuell erfassen**")
+        updated_storeys = []
+        for idx, storey in enumerate(manual_storeys):
+            c1, c2 = st.columns([2, 1])
+            name_val = c1.text_input(
+                f"Geschoss {idx+1} Bezeichnung",
+                value=storey.get("name", f"Geschoss {idx+1}"),
+                key=f"manual_storey_name_{idx}",
+            )
+            area_val = c2.number_input(
+                "Fläche [m²]",
+                value=float(storey.get("area", 0.0) or 0.0),
+                min_value=0.0,
+                step=1.0,
+                key=f"manual_storey_area_{idx}",
+            )
+            updated_storeys.append({"name": name_val, "area": area_val})
+
+        col_add, col_del = st.columns([1, 1])
+        if col_add.button("Geschoss hinzufügen"):
+            updated_storeys.append({"name": f"Geschoss {len(updated_storeys)+1}", "area": 0.0})
+        if updated_storeys and col_del.button("Letztes Geschoss entfernen"):
+            updated_storeys = updated_storeys[:-1]
+
+        # Summe bilden und in Session puffern
+        total_manual_area = sum(s["area"] for s in updated_storeys)
+        st.session_state["manual_storeys"] = updated_storeys
+        st.session_state["manual_inputs"]["building_area_m2"] = total_manual_area
+        st.caption(f"Summierte Geschossfläche: {total_manual_area:.2f} m²")
     start_submitted = st.button("Projekt starten")
 
     if start_submitted:
@@ -393,12 +429,14 @@ with tab_start:
                     height_val = st.session_state["ifc_result"]["height"].height_m if st.session_state["ifc_result"]["height"] else None
                     area_val = st.session_state["ifc_result"]["area"].building_area_m2 if st.session_state["ifc_result"]["area"] else None
                 st.session_state["manual_inputs"] = {"height_m": height_val, "building_area_m2": area_val}
+                st.session_state["manual_storeys"] = []
             else:
                 # Kein IFC: manuelle Felder befüllen
                 st.session_state["ifc_result"] = {"height": None, "area": None, "error": None}
                 st.session_state["manual_inputs"] = {
                     "height_m": manual_height_start,
-                    "building_area_m2": manual_area_start,
+                    "building_area_m2": st.session_state["manual_inputs"].get("building_area_m2"),
+                    "storeys": st.session_state.get("manual_storeys", []),
                 }
             st.success("Projekt gestartet.")
 
