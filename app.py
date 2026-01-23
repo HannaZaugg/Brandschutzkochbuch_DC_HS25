@@ -1,12 +1,15 @@
 import os
 import tempfile
+import io
+import base64
 from datetime import datetime
 
 import streamlit as st
 
-from questions import DEFAULT_QUESTIONS
+from questions import DEFAULT_QUESTIONS, answers_for_excel
 from processors.area import AreaService
 from processors.height import HeightService
+from processors.vkf_rules import vertical_escape_routes
 
 # run with: streamlit run app.py
 
@@ -23,13 +26,210 @@ st.session_state.setdefault("ifc_result", {"height": None, "area": None, "error"
 st.session_state.setdefault("active_tab", "Projektstart")  # erinnert an zuletzt genutzten Tab
 st.session_state.setdefault("has_ifc_choice", "Ja")
 
-# Titel-Header der App für sofortige Orientierung
-st.title("🧯 Brandschutzkochbuch")
-st.markdown("Starte ein Projekt, lade (optional) ein IFC hoch und beantworte die Fragen. Wechsel jederzeit zwischen Tabs.")
+# Logo laden und als data URI einbetten (fallback: ohne Bild)
+logo_path = "/Users/hannazaugg/Library/Mobile Documents/com~apple~CloudDocs/HSLU/HS25/DT_Programming/Brandschutzkochbuch/Code/Tabellen/Flammen.png"
+logo_data_uri = None
+try:
+    with open(logo_path, "rb") as f:
+        logo_b64 = base64.b64encode(f.read()).decode("utf-8")
+        logo_data_uri = f"data:image/png;base64,{logo_b64}"
+except FileNotFoundError:
+    logo_data_uri = None
+
+# Titel-Header der App für sofortige Orientierung + Hero-Background
+bg_style = ""
+if logo_data_uri:
+    bg_style = f"background-image: url('{logo_data_uri}');"
+st.markdown(
+    f"""
+    <div style="width:100%; height:180px; border-radius:10px; overflow:hidden; position:relative; margin-bottom:0; {bg_style} background-size:cover; background-position:center;">
+        <div style="position:absolute; inset:0; background:linear-gradient(90deg, rgba(255,255,255,0.82) 45%, rgba(255,255,255,0.6) 100%); display:flex; align-items:center; padding:16px 20px;">
+            <div>
+                <h1 style="margin:0; padding:0; font-size:32px;">Brandschutzkochbuch</h1>
+                <p style="margin:6px 0 0 0; color:#3a3a3a; font-size:16px;">Starte ein Projekt, lade (optional) ein IFC hoch und beantworte die Fragen. Wechsel jederzeit zwischen Tabs.</p>
+            </div>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 summary_container = st.container()  # Platzhalter für die Übersicht oberhalb der Tabs
+
+# Globales Styling (Fonts, Farben, Inputs, Buttons)
+st.markdown(
+    """
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@400;600;700&display=swap');
+    :root {
+        --bg: #ffffff;
+        --panel: #f7f7f7;
+        --card: #ffffff;
+        --muted: #4a4a4a;
+        --accent1: #b83a2f;
+        --accent2: #7a2e2e;
+        --accent3: #c56a46;
+        --text: #161616;
+        --text-muted: #3a3a3a;
+    }
+    html, body, [class*="css"] {
+        font-family: 'Roboto Condensed', 'Helvetica Neue', Arial, sans-serif;
+        color: var(--text);
+        background: var(--bg);
+        background-image: url("file:///Users/hannazaugg/Library/Mobile%20Documents/com~apple~CloudDocs/HSLU/HS25/DT_Programming/Brandschutzkochbuch/Code/Tabellen/Flammen.png");
+        background-size: cover;
+        background-repeat: no-repeat;
+        background-attachment: fixed;
+        background-position: center;
+    }
+    .stApp {
+        background: linear-gradient(rgba(255,255,255,0.92), rgba(255,255,255,0.92));
+    }
+    section.main > div {
+        background: transparent;
+    }
+    h1, h2, h3, h4, h5 {
+        color: var(--text);
+        letter-spacing: 0.1px;
+    }
+    p, label, span {
+        color: var(--text-muted);
+    }
+    .stTextInput > div > div > input,
+    .stNumberInput input,
+    .stSelectbox > div > div > select,
+    .stRadio > div {
+        background: var(--panel);
+        color: var(--text);
+        border-radius: 6px;
+        border: 1px solid #3a2b2b;
+    }
+    .stTextInput > div > div > input:focus,
+    .stNumberInput input:focus,
+    .stSelectbox > div > div > select:focus {
+        border-color: var(--accent1);
+        box-shadow: 0 0 0 1px var(--accent1);
+    }
+    /* Buttons und Downloads breit selektieren */
+    button,
+    button[kind],
+    button[data-baseweb="button"],
+    div.stButton > button,
+    div.stDownloadButton > button,
+    div[data-testid="baseButton-secondary"] > button,
+    div[data-testid="baseButton-primary"] > button,
+    div[data-testid="baseButton-primaryFormSubmit"] > button,
+    div[data-testid="baseButton-secondaryFormSubmit"] > button {
+        background: #5a2a2a !important;
+        color: #ffffff !important;
+        /* falls Text-Knoten eigene Farbe erzwingen: */
+        }
+    button *,
+    div.stButton > button *,
+    div.stDownloadButton > button *,
+    div[data-testid="baseButton-secondary"] > button *,
+    div[data-testid="baseButton-primary"] > button *,
+    div[data-testid="baseButton-primaryFormSubmit"] > button *,
+    div[data-testid="baseButton-secondaryFormSubmit"] > button * {
+        color: #ffffff !important;
+        border: none !important;
+        border-radius: 6px !important;
+        font-weight: 800 !important;
+        letter-spacing: 0.3px !important;
+        box-shadow: none !important;
+    }
+    button:hover,
+    button[kind]:hover,
+    button[data-baseweb="button"]:hover,
+    div.stButton > button:hover,
+    div.stDownloadButton > button:hover,
+    div[data-testid="baseButton-secondary"] > button:hover,
+    div[data-testid="baseButton-primary"] > button:hover,
+    div[data-testid="baseButton-primaryFormSubmit"] > button:hover,
+    div[data-testid="baseButton-secondaryFormSubmit"] > button:hover {
+        background: #7c3c3c !important;
+        color: #ffffff !important;
+        box-shadow: none !important;
+    }
+    button:disabled,
+    button[kind]:disabled,
+    button[data-baseweb="button"]:disabled,
+    div.stButton > button:disabled,
+    div.stDownloadButton > button:disabled,
+    div[data-testid="baseButton-secondary"] > button:disabled,
+    div[data-testid="baseButton-primary"] > button:disabled,
+    div[data-testid="baseButton-primaryFormSubmit"] > button:disabled,
+    div[data-testid="baseButton-secondaryFormSubmit"] > button:disabled {
+        background: #8c6e6e !important;
+        color: #ffffff !important;
+        opacity: 1 !important;
+        filter: none !important;
+    }
+    /* Tabs auf rotbraun mit weißer Schrift angleichen */
+    .stTabs [role="tab"] {
+        color: #5a2a2a;
+        border: 1px solid #5a2a2a33;
+        background: #ffffff;
+        border-radius: 6px 6px 0 0;
+        margin-right: 4px;
+    }
+    .stTabs [aria-selected="true"] {
+        color: #ffffff;
+        background: #5a2a2a;
+        border-color: #5a2a2a;
+    }
+    /* Tabs sticky oben halten */
+    .stTabs {
+        margin-bottom: 8px;
+    }
+    /* Tab-Leiste normal (kein Sticky, kein Balken) */
+    .stTabs [data-baseweb="tab-list"] {
+        position: relative;
+        top: auto;
+        z-index: auto;
+        background: transparent;
+        padding: 6px 0;
+        display: flex;
+        justify-content: space-between;
+        box-shadow: none;
+    }
+    .stTabs [role="tab"] {
+        flex: 1 1 0;
+        text-align: center;
+        background: #f3dedd;
+        color: #5a2a2a;
+        border: 1px solid #5a2a2a33;
+        border-bottom: none;
+    }
+    .stTabs [aria-selected="true"] {
+        color: #ffffff;
+        background: #5a2a2a;
+        border-color: #5a2a2a;
+    }
+    /* Logo oben links einblenden (Dunkelrot) */
+    .logo-container {
+        position: fixed;
+        top: 10px;
+        left: 10px;
+        z-index: 100;
+    }
+    .logo-container img {
+        width: 48px;
+        height: 48px;
+        object-fit: contain;
+        filter: invert(14%) sepia(57%) saturate(526%) hue-rotate(335deg) brightness(90%) contrast(90%);
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 # Seitenleiste: Projektinfos und Sitzungsstart
 with st.sidebar:
+    st.image(
+        "/Users/hannazaugg/Library/Mobile Documents/com~apple~CloudDocs/HSLU/HS25/DT_Programming/Brandschutzkochbuch/Code/Tabellen/Logo.svg",
+        width=110,
+        caption="",
+    )
     # Aktiven Zeitstempel anzeigen, damit klar ist wann gestartet wurde
     st.caption(f"Aktive Sitzung gestartet: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     # Kurzer Überblick zum Status anzeigen
@@ -215,29 +415,145 @@ with tab_questions:
             grouped: dict[str, list] = {}
             for q in DEFAULT_QUESTIONS:
                 grouped.setdefault(q.category, []).append(q)
+
+            # Abgeleitete Werte für Fluchtwege
+            area_for_escape_form = None
+            if st.session_state["ifc_result"].get("area"):
+                area_for_escape_form = st.session_state["ifc_result"]["area"].building_area_m2
+            if area_for_escape_form is None:
+                area_for_escape_form = st.session_state["manual_inputs"].get("building_area_m2")
+            escape_count_form = vertical_escape_routes(area_for_escape_form)
+
+            def render_question_field(question, label_visibility: str = "visible"):
+                current_val = st.session_state["question_answers"].get(question.key, question.default)
+                if question.options and question.widget == "select":
+                    st.selectbox(
+                        question.prompt,
+                        options=question.options,
+                        index=question.options.index(current_val) if current_val in (question.options or []) else 0,
+                        key=f"question_{question.key}",
+                        label_visibility=label_visibility,
+                    )
+                elif question.options:
+                    default_index = (
+                        question.options.index(current_val)
+                        if current_val in (question.options or [])
+                        else 0
+                    )
+                    st.radio(
+                        question.prompt,
+                        options=question.options,
+                        index=default_index,
+                        key=f"question_{question.key}",
+                        label_visibility=label_visibility,
+                    )
+                else:
+                    st.text_input(
+                        question.prompt,
+                        value=current_val,
+                        key=f"question_{question.key}",
+                        label_visibility=label_visibility,
+                    )
+
             for category, questions in grouped.items():
                 st.subheader(category)
-                for question in questions:
-                    current_val = st.session_state["question_answers"].get(question.key, question.default)
-                    if question.options:
-                        # Auswahl aus vorgegebenen Optionen (Radio)
-                        default_index = (
-                            question.options.index(current_val)
-                            if current_val in (question.options or [])
-                            else 0
+                if category.lower() == "qualitätssicherung":
+                    for question in questions:
+                        render_question_field(question)
+                    img_cols = st.columns(2)
+                    with img_cols[0]:
+                        st.image(
+                            "/Users/hannazaugg/Library/Mobile Documents/com~apple~CloudDocs/HSLU/HS25/DT_Programming/Brandschutzkochbuch/Code/Tabellen/3.3.1 QSS.png",
+                            caption="VKF Tabelle Qualitätssicherung",
+                            use_container_width=True,
                         )
-                        st.radio(
-                            question.prompt,
-                            options=question.options,
-                            index=default_index,
-                            key=f"question_{question.key}",
+                    with img_cols[1]:
+                        st.image(
+                            "/Users/hannazaugg/Library/Mobile Documents/com~apple~CloudDocs/HSLU/HS25/DT_Programming/Brandschutzkochbuch/Code/Tabellen/3.4.1 QSS.png",
+                            caption="VKF Tabelle Qualitätssicherung (3.4.1)",
+                            use_container_width=True,
                         )
+                elif category.lower() == "gebäudehülle":
+                    col_left, col_right = st.columns([2, 1])
+                    with col_left:
+                        for question in questions:
+                            render_question_field(question)
+                    with col_right:
+                        st.image(
+                            "/Users/hannazaugg/Library/Mobile Documents/com~apple~CloudDocs/HSLU/HS25/DT_Programming/Brandschutzkochbuch/Code/Tabellen/3.2.8 Anforderungen Aussenwandbekleidungssysteme.png",
+                            caption="3.2.8 Anforderungen Aussenwandbekleidungssysteme",
+                            use_container_width=True,
+                        )
+                        st.image(
+                            "/Users/hannazaugg/Library/Mobile Documents/com~apple~CloudDocs/HSLU/HS25/DT_Programming/Brandschutzkochbuch/Code/Tabellen/3.3.4 Anforderungen Bedachungen.png",
+                            caption="3.3.4 Anforderungen Bedachungen",
+                            use_container_width=True,
+                        )
+                elif category.lower() == "tragwerke und brandabschnitte":
+                    # Konzept-Frage mit Definitionen über gesamte Breite
+                    hints_concept = """
+                    <div style="border:1px solid #d9d9d9; border-radius:8px; padding:10px; background:#f9fafb; margin:6px 0 8px 0;">
+                        <div style="font-weight:700; margin-bottom:6px;">Definitionen</div>
+                        <div style="font-weight:600;">Bauliches Konzept</div>
+                        <div style="margin-bottom:8px;">Die Schutzziele werden durch bauliche Brandschutzmassnahmen erreicht. Nutzungsbezogen können technische Brandschutzmassnahmen erforderlich sein.</div>
+                        <div style="font-weight:600;">Löschanlagenkonzept</div>
+                        <div>Bei einem Löschanlagenkonzept werden zu den baulichen Brandschutzmassnahmen VKF-anerkannte, stationäre Löschanlagen berücksichtigt.</div>
+                    </div>
+                    """
+                    for question in questions:
+                        if question.key == "concept_type":
+                            st.markdown(f"**{question.prompt}**")
+                            st.markdown(hints_concept, unsafe_allow_html=True)
+                            render_question_field(question, label_visibility="collapsed")
+                    # Restliche Fragen und Tabelle nebeneinander
+                    col_left, col_right = st.columns([2, 1])
+                    with col_left:
+                        for question in questions:
+                            if question.key != "concept_type":
+                                render_question_field(question)
+                    with col_right:
+                        vkf_cat = (summary_values().get("vkf_cat") or "").lower()
+                        img_path = None
+                        caption = ""
+                        if "geringer höhe" in vkf_cat:
+                            img_path = "/Users/hannazaugg/Library/Mobile Documents/com~apple~CloudDocs/HSLU/HS25/DT_Programming/Brandschutzkochbuch/Code/Tabellen/3.7.1 Anforderungen geringe Höhe.png"
+                            caption = "3.7.1 Anforderungen geringe Höhe"
+                        elif "mittlerer höhe" in vkf_cat:
+                            img_path = "/Users/hannazaugg/Library/Mobile Documents/com~apple~CloudDocs/HSLU/HS25/DT_Programming/Brandschutzkochbuch/Code/Tabellen/3.7.1 Anforderungen mittlere Höhe.png"
+                            caption = "3.7.1 Anforderungen mittlere Höhe"
+                        elif "hochhaus" in vkf_cat:
+                            img_path = "/Users/hannazaugg/Library/Mobile Documents/com~apple~CloudDocs/HSLU/HS25/DT_Programming/Brandschutzkochbuch/Code/Tabellen/3.7.1 Anforderungen Hochhaus.png"
+                            caption = "3.7.1 Anforderungen Hochhaus"
+                        if img_path:
+                            st.image(img_path, caption=caption, use_container_width=True)
+                else:
+                    if category.lower() == "flucht- & rettungswege":
+                        hints = {
+                            "compliance_exit_free": "Vertikale Fluchtwege müssen an einen sicheren Ort im Freien führen. Mehrere vertikale Fluchtwege müssen unabhängig voneinander an einen sicheren Ort im Freien führen.",
+                            "compliance_doors": f"<50 Per.: ein Ausgang mit 0.9 m; <100 Personen: zwei Ausgänge mit je 0.9 m; <200 Personen: drei Ausgänge mit je 0.9 m oder zwei Ausgänge mit 0.9 m und 1.2 m; >200 Personen: mehrere Ausgänge mit mindestens je 1.2 m; Büros/Gewerbe/Industrie: Ausgänge 0.9 m zulässig. Ergebnis: {escape_count_form}",
+                            "compliance_vertical_routes": f"{escape_count_form}",
+                            "compliance_width": "Die Mindestbreite von horizontalen Fluchtwegen muss 1.2 m betragen.",
+                            "compliance_room_sequence": "Innerhalb der Nutzungseinheit darf der Fluchtweg über maximal einen angrenzenden Raum (z. B. Kombizonen) zu einem horizontalen oder vertikalen Fluchtweg führen.",
+                            "compliance_vertical_count": f"Errechnete Mindestanzahl: {escape_count_form}",
+                        }
+                        for question in questions:
+                            if question.key in hints:
+                                st.markdown(f"**{question.prompt}**")
+                                st.markdown(
+                                    f"""<div style="border:1px solid #d9d9d9; border-radius:8px; padding:8px; background:#f9fafb; margin:6px 0 8px 0;">
+                                            <div style="font-weight:700; margin-bottom:4px;">Hinweis</div>
+                                            <div>{hints[question.key]}</div>
+                                        </div>""",
+                                    unsafe_allow_html=True,
+                                )
+                                render_question_field(question, label_visibility="collapsed")
+                            else:
+                                render_question_field(question)
                     else:
-                        st.text_input(
-                            question.prompt,
-                            value=current_val,
-                            key=f"question_{question.key}",
-                        )
+                        for question in questions:
+                            render_question_field(question)
+
+            # WICHTIG: Submit-Button bleibt im Form-Block
             submitted = st.form_submit_button("Antworten speichern")
 
         # Speicherung der neuen Antworten nach Klick auf den Button
@@ -277,17 +593,54 @@ with tab_dashboard:
             grouped_answers.setdefault(q.category, []).append(
                 (q.excel_header, q.prompt, st.session_state["question_answers"].get(q.key, q.default))
             )
+        # Personenbelegung (Raum > / < 300) aufbereiten
+        occ_raw = (st.session_state["question_answers"].get("occupancy_over_300", "nein") or "nein").lower()
+        occ_txt = "Raum >300 Per." if occ_raw == "ja" else "Raum <300 Per."
+        if "Flucht- & Rettungswege" in grouped_answers:
+            adjusted: list[tuple[str, str, str]] = []
+            for excel, prompt, ans in grouped_answers["Flucht- & Rettungswege"]:
+                if excel == "Personenbelegung":
+                    adjusted.append((excel, prompt, occ_txt))
+                else:
+                    adjusted.append((excel, prompt, ans))
+            grouped_answers["Flucht- & Rettungswege"] = adjusted
+        else:
+            grouped_answers["Flucht- & Rettungswege"] = [("Personenbelegung", "Personenbelegung", occ_txt)]
+
+        # Abgeleitete Kategorie für vertikale Fluchtwege
+        area_for_escape = None
+        if st.session_state["ifc_result"].get("area"):
+            area_for_escape = st.session_state["ifc_result"]["area"].building_area_m2
+        if area_for_escape is None:
+            area_for_escape = st.session_state["manual_inputs"].get("building_area_m2")
+        escape_count = vertical_escape_routes(area_for_escape)
+        # Nur die Flucht-/Rettungs-Fragen anzeigen (ohne Definitionstexte)
+        flucht_keys = {
+            "compliance_exit_free": "Ausgang ins Freie",
+            "compliance_doors": "Anzahl Ausgänge / Türbreiten",
+            "compliance_vertical_routes": "Vertikale Fluchtwege",
+            "compliance_width": "Abmessungen min. 1.20m",
+            "compliance_room_sequence": "Raumabfolge",
+            "compliance_vertical_count": "Vertikale Fluchtwege (Anzahl)",
+            "occupancy_over_300": "Personenbelegung",
+        }
+        filtered = []
+        for excel, prompt, ans in grouped_answers.get("Flucht- & Rettungswege", []):
+            # map by key if possible
+            filtered.append((excel, prompt, ans))
+        # Sicherstellen, dass nur die 6 Kernfragen + Personenbelegung stehen
+        grouped_answers["Flucht- & Rettungswege"] = filtered
 
         categories = [c for c in grouped_answers.keys() if c.lower() != "projekt"]
         cols = st.columns(2)
-        # Farbige Kacheln
-        palette = ["#eef2ff", "#e8fff3", "#fff4e6", "#f0f9ff", "#fdf2f8", "#f3f4f6"]
+        # Farbige Kacheln in Rot-/Brauntönen
+        palette = ["#3b1a1a", "#4a2222", "#5a2a2a", "#6b3333", "#7c3c3c", "#8e4646"]
         for idx, cat in enumerate(categories):
             bg = palette[idx % len(palette)]
             with cols[idx % 2]:
                 st.markdown(
                     f"""
-                    <div style="background:{bg}; padding:12px 14px; border-radius:8px; border:1px solid #d9d9d9; margin-bottom:12px;">
+                    <div style="background:{bg}; padding:12px 14px; border-radius:8px; margin-bottom:12px; color:#fff;">
                         <div style="font-weight:700; font-size:16px; margin-bottom:8px;">{cat}</div>
                         <div style="display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px 12px;">
                             {"".join(f"<div><strong>{excel}</strong>: {answer or '-'}</div>" for excel, _prompt, answer in grouped_answers[cat])}
@@ -333,3 +686,43 @@ with summary_container:
                     "Fläche [m²]": [round(s.area_m2, 3) for s in storeys],
                 }
             )
+
+# Excel-Download (nur wenn IFC-Ergebnisse vorhanden)
+with tab_dashboard:
+    if st.session_state.get("project_started") and st.session_state["ifc_result"].get("height") and st.session_state["ifc_result"].get("area"):
+        height_res = st.session_state["ifc_result"]["height"]
+        area_res = st.session_state["ifc_result"]["area"]
+        extra_cols = answers_for_excel(st.session_state["question_answers"], DEFAULT_QUESTIONS)
+
+        template_path = "/Users/hannazaugg/Library/Mobile Documents/com~apple~CloudDocs/HSLU/HS25/DT_Programming/Brandschutzkochbuch/Code/Excel/10000_BSKo-Kochbuch_JJJJ-MM-TT.xlsx"
+
+        if st.button("Excel exportieren"):
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
+            tmp.close()
+            data = None
+            try:
+                try:
+                    from excel import write_result_to_template
+                    write_result_to_template(height_res, area_res, template_path, tmp.name, extra_columns=extra_cols)
+                except FileNotFoundError:
+                    from excel import write_result_to_excel
+                    write_result_to_excel(height_res, area_res, tmp.name, extra_columns=extra_cols)
+
+                with open(tmp.name, "rb") as f:
+                    data = f.read()
+            finally:
+                try:
+                    os.unlink(tmp.name)
+                except Exception:
+                    pass
+
+            if data:
+                proj_num = st.session_state.get("project_info", {}).get("number") or "00000"
+                today = datetime.now().strftime("%Y-%m-%d")
+                file_name = f"{proj_num}_BSKo-Kochbuch_{today}.xlsx"
+                st.download_button(
+                    "Download Excel",
+                    data=data,
+                    file_name=file_name,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )

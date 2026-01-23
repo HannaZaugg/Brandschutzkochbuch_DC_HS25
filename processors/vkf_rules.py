@@ -39,3 +39,16 @@ def storey_area_comment(
     if storey_area_m2 > limit_m2:
         return "Brandabschnittsunterteilung erforderlich"
     return ""
+
+
+def vertical_escape_routes(building_area_m2: Optional[float]) -> str:
+    """
+    Ermittelt die Mindestanzahl vertikaler Fluchtwege basierend auf der Geschossfläche.
+
+    Regel (VKF):
+      - bis 900 m²: mindestens ein vertikaler Fluchtweg
+      - mehr als 900 m²: mindestens zwei vertikale Fluchtwege
+    """
+    if building_area_m2 is None:
+        return "n/a"
+    return "min. ein vertikaler Fluchtweg" if building_area_m2 <= 900 else "min. zwei vertikale Fluchtwege"
